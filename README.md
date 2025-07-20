@@ -14,22 +14,12 @@ path="src/client.rs"
 [dependencies]
 anyhow = "1.0.98"
 bytes = "1.10.1"
-chrono = {version="0.4.41", features = ["serde"]}
-dotenvy = "0.15.7"
 futures = "0.3.31"
 h3 = "0.0.8"
 h3-quinn = "0.0.10"
 http = "1.3.1"
-jsonwebtoken = "9.3.1"
 quinn = "0.11.8"
 rcgen = "0.14.2"
-reqwest = {version = "0.12.22", features = ["json", "rustls-tls"], default-features = false}
 rustls = {version="0.23.29",features = ["aws_lc_rs"]}
-serde = {version = "1.0.219", features = ["derive"]}
-serde_json = "1.0.141"
-sqlx = {version = "0.8.6", features = ["mysql", "runtime-tokio", "macros", "chrono", "uuid"] }
 tokio = {version ="1.46.1" , features = ["full"]}
-
-
-
 
