@@ -8,8 +8,10 @@ mod currency;
 mod database;
 mod error;
 mod firebase;
+mod handlers;
 mod logging;
 mod models;
+mod routing;
 mod server;
 
 use config::AppConfig;

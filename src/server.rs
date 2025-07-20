@@ -1,9 +1,9 @@
 use bytes::Bytes;
-use http::{Request, Response, StatusCode};
+use http::{Response, StatusCode};
 use quinn::{Endpoint, ServerConfig, Connection as QuinnConnection};
 use rustls::{ServerConfig as TlsServerConfig, pki_types::PrivateKeyDer};
 use std::net::SocketAddr;
-use std::str::FromStr;
+
 use std::sync::Arc;
 use tracing::{info, warn, error, debug};
 
@@ -11,12 +11,14 @@ use crate::config::AppConfig;
 use crate::database::DatabaseService;
 use crate::error::{AppError, AppResult};
 use crate::currency::CurrencyHelper;
+use crate::routing::{Router, RequestContext, ResponseBuilder, AppServices, LoggingMiddleware, AuthMiddleware, CorsMiddleware, ValidationMiddleware};
+use crate::handlers;
 
 /// HTTP/3 Server with QUIC protocol support
 pub struct Http3Server {
     endpoint: Endpoint,
-    database: Arc<DatabaseService>,
-    currency_helper: Arc<CurrencyHelper>,
+    router: Arc<Router>,
+    services: AppServices,
     config: AppConfig,
 }
 
@@ -49,14 +51,71 @@ impl Http3Server {
         let endpoint = Endpoint::server(server_config, bind_addr)
             .map_err(|e| AppError::Internal(format!("Failed to create endpoint: {}", e)))?;
 
+        // Create services container
+        let services = AppServices {
+            database: database.clone(),
+            currency_helper: currency_helper.clone(),
+        };
+
+        // Set up router with routes and middleware
+        let router = Self::setup_router();
+
         info!("HTTP/3 server initialized on {}", config.server_address());
 
         Ok(Self {
             endpoint,
-            database,
-            currency_helper,
+            router: Arc::new(router),
+            services,
             config,
         })
+    }
+
+    /// Set up the router with all routes and middleware
+    fn setup_router() -> Router {
+        use http::Method;
+        
+        let mut router = Router::new();
+
+        // Add middleware
+        router.add_middleware("logging", Arc::new(LoggingMiddleware));
+        router.add_middleware("auth", Arc::new(AuthMiddleware));
+        router.add_middleware("cors", Arc::new(CorsMiddleware));
+        router.add_middleware("validation", Arc::new(ValidationMiddleware));
+
+        // Add routes
+        router.add_route(Method::GET, "/", Box::new(|ctx, services| {
+            Box::pin(handlers::root_handler(ctx, services))
+        }));
+
+        router.add_route(Method::GET, "/health", Box::new(|ctx, services| {
+            Box::pin(handlers::health_handler(ctx, services))
+        }));
+
+        router.add_route(Method::GET, "/api/docs", Box::new(|ctx, services| {
+            Box::pin(handlers::api_docs_handler(ctx, services))
+        }));
+
+        router.add_route(Method::GET, "/api/currency", Box::new(|ctx, services| {
+            Box::pin(handlers::currency_handler(ctx, services))
+        }));
+
+        router.add_route(Method::GET, "/api/users/profile", Box::new(|ctx, services| {
+            Box::pin(handlers::user_profile_handler(ctx, services))
+        }));
+
+        router.add_route(Method::GET, "/api/menu", Box::new(|ctx, services| {
+            Box::pin(handlers::menu_handler(ctx, services))
+        }));
+
+        router.add_route(Method::GET, "/api/orders", Box::new(|ctx, services| {
+            Box::pin(handlers::orders_handler(ctx, services))
+        }));
+
+        router.add_route(Method::OPTIONS, "/*", Box::new(|ctx, services| {
+            Box::pin(handlers::cors_preflight_handler(ctx, services))
+        }));
+
+        router
     }
 
     /// Create TLS configuration with ALPN protocol negotiation
@@ -107,13 +166,13 @@ impl Http3Server {
             let conn = conn.await
                 .map_err(|e| AppError::Internal(format!("Connection failed: {}", e)))?;
 
-            // Clone services for this connection
-            let database = Arc::clone(&self.database);
-            let currency_helper = Arc::clone(&self.currency_helper);
+            // Clone router and services for this connection
+            let router = Arc::clone(&self.router);
+            let services = self.services.clone();
 
             // Spawn connection handler
             tokio::spawn(async move {
-                if let Err(e) = Self::handle_connection(conn, database, currency_helper).await {
+                if let Err(e) = Self::handle_connection(conn, router, services).await {
                     error!("Connection handling failed: {}", e);
                 }
             });
@@ -125,8 +184,8 @@ impl Http3Server {
     /// Handle individual QUIC connection
     async fn handle_connection(
         conn: QuinnConnection,
-        database: Arc<DatabaseService>,
-        currency_helper: Arc<CurrencyHelper>,
+        router: Arc<Router>,
+        services: AppServices,
     ) -> AppResult<()> {
         // Create H3 connection from Quinn connection
         let mut h3_conn = h3::server::Connection::new(h3_quinn::Connection::new(conn))
@@ -139,16 +198,16 @@ impl Http3Server {
         loop {
             match h3_conn.accept().await {
                 Ok(Some(req_resolver)) => {
-                    // Clone services for this request
-                    let db_clone = Arc::clone(&database);
-                    let currency_clone = Arc::clone(&currency_helper);
+                    // Clone router and services for this request
+                    let router_clone = Arc::clone(&router);
+                    let services_clone = services.clone();
 
                     // Spawn request handler
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_request(
                             req_resolver,
-                            db_clone,
-                            currency_clone,
+                            router_clone,
+                            services_clone,
                         ).await {
                             error!("Request handling failed: {}", e);
                         }
@@ -171,8 +230,8 @@ impl Http3Server {
     /// Handle individual HTTP request
     async fn handle_request(
         req_resolver: h3::server::RequestResolver<h3_quinn::Connection, bytes::Bytes>,
-        database: Arc<DatabaseService>,
-        currency_helper: Arc<CurrencyHelper>,
+        router: Arc<Router>,
+        services: AppServices,
     ) -> AppResult<()> {
         // Resolve the request
         let (req, mut stream) = req_resolver.resolve_request().await
@@ -185,14 +244,30 @@ impl Http3Server {
             req.version()
         );
 
-        // Route the request
-        let (response_body, content_type, status_code) = Self::route_request(
-            &req,
-            database,
-            currency_helper,
-        ).await;
+        // Create request context
+        let ctx = RequestContext::from_request(&req, None);
 
-        // Build response
+        // Route the request using the new router
+        let response_builder = match router.route(ctx, services).await {
+            Ok(builder) => builder,
+            Err(e) => {
+                error!("Routing error: {}", e);
+                // Create error response
+                let error_response = serde_json::json!({
+                    "error": "Internal Server Error",
+                    "message": e.to_string(),
+                    "timestamp": chrono::Utc::now()
+                });
+                ResponseBuilder::new()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .json(&error_response)
+            }
+        };
+
+        // Build the response
+        let (response_body, content_type, status_code) = response_builder.build();
+
+        // Build HTTP response
         let response = Response::builder()
             .status(status_code)
             .header("content-type", content_type)
@@ -216,100 +291,7 @@ impl Http3Server {
         Ok(())
     }
 
-    /// Route HTTP requests to appropriate handlers
-    async fn route_request(
-        req: &Request<()>,
-        database: Arc<DatabaseService>,
-        currency_helper: Arc<CurrencyHelper>,
-    ) -> (String, &'static str, StatusCode) {
-        match (req.method().as_str(), req.uri().path()) {
-            // Health endpoints
-            ("GET", "/") => {
-                let response = serde_json::json!({
-                    "service": "Hotel Booking System",
-                    "version": "1.0.0",
-                    "protocol": "HTTP/3",
-                    "status": "running",
-                    "timestamp": chrono::Utc::now()
-                });
-                (response.to_string(), "application/json", StatusCode::OK)
-            }
-            ("GET", "/health") => {
-                match database.health_check().await {
-                    Ok(health) => {
-                        let status = if health.is_healthy { "healthy" } else { "unhealthy" };
-                        let status_code = if health.is_healthy { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
-                        
-                        let response = serde_json::json!({
-                            "status": status,
-                            "database": health,
-                            "timestamp": chrono::Utc::now()
-                        });
-                        (response.to_string(), "application/json", status_code)
-                    }
-                    Err(e) => {
-                        let response = serde_json::json!({
-                            "status": "unhealthy",
-                            "error": e.to_string(),
-                            "timestamp": chrono::Utc::now()
-                        });
-                        (response.to_string(), "application/json", StatusCode::SERVICE_UNAVAILABLE)
-                    }
-                }
-            }
 
-            // Currency endpoints
-            ("GET", "/api/currency") => {
-                let currencies = currency_helper.supported_currencies();
-                let amount = rust_decimal::Decimal::from_str("1234.56").unwrap_or_default();
-                let formatted = currency_helper.format(amount, None);
-
-                let response = serde_json::json!({
-                    "default_currency": {
-                        "code": currency_helper.code(),
-                        "symbol": currency_helper.symbol(),
-                        "name": currency_helper.name()
-                    },
-                    "supported_currencies": currencies,
-                    "examples": {
-                        "amount": amount.to_string(),
-                        "formatted": formatted,
-                        "range": currency_helper.format_range(
-                            rust_decimal::Decimal::from_str("100").unwrap_or_default(),
-                            rust_decimal::Decimal::from_str("500").unwrap_or_default()
-                        )
-                    },
-                    "timestamp": chrono::Utc::now()
-                });
-                (response.to_string(), "application/json", StatusCode::OK)
-            }
-
-            // User endpoints (placeholder for now)
-            ("GET", "/api/users/profile") => {
-                let response = serde_json::json!({
-                    "message": "User profile endpoint",
-                    "note": "Authentication required",
-                    "timestamp": chrono::Utc::now()
-                });
-                (response.to_string(), "application/json", StatusCode::UNAUTHORIZED)
-            }
-
-            // CORS preflight
-            ("OPTIONS", _) => {
-                (String::new(), "text/plain", StatusCode::NO_CONTENT)
-            }
-
-            // 404 for unknown routes
-            _ => {
-                let response = serde_json::json!({
-                    "error": "Not Found",
-                    "message": format!("Route {} {} not found", req.method(), req.uri().path()),
-                    "timestamp": chrono::Utc::now()
-                });
-                (response.to_string(), "application/json", StatusCode::NOT_FOUND)
-            }
-        }
-    }
 }
 
 /// Certificate chain structure
