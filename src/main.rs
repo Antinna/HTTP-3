@@ -6,12 +6,17 @@ use std::sync::Arc;
 use tracing::info;
 
 mod config;
+mod currency;
 mod database;
 mod error;
+mod firebase;
 mod logging;
+mod models;
 
 use config::AppConfig;
+use currency::CurrencyHelper;
 use database::DatabaseService;
+use firebase::FirebaseAuth;
 
 #[tokio::main]
 async fn main() -> Result<()> {

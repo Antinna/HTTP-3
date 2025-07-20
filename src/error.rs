@@ -8,43 +8,43 @@ use std::fmt;
 pub enum AppError {
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
-    
+
     #[error("Internal error: {0}")]
     Anyhow(#[from] anyhow::Error),
-    
+
     #[error("Authentication error: {0}")]
     Authentication(String),
-    
+
     #[error("Authorization error: {0}")]
     Authorization(String),
-    
+
     #[error("Validation error: {0}")]
     Validation(String),
-    
+
     #[error("Payment error: {0}")]
     Payment(String),
-    
+
     #[error("External service error: {0}")]
     ExternalService(String),
-    
+
     #[error("Configuration error: {0}")]
     Configuration(String),
-    
+
     #[error("Not found: {0}")]
     NotFound(String),
-    
+
     #[error("Conflict: {0}")]
     Conflict(String),
-    
+
     #[error("Rate limit exceeded: {0}")]
     RateLimit(String),
-    
+
     #[error("Internal server error: {0}")]
     Internal(String),
-    
+
     #[error("Bad request: {0}")]
     BadRequest(String),
-    
+
     #[error("Service unavailable: {0}")]
     ServiceUnavailable(String),
 }
@@ -66,9 +66,10 @@ impl AppError {
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            AppError::Anyhow(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
-    
+
     /// Get error code for client identification
     pub fn error_code(&self) -> &'static str {
         match self {
@@ -85,9 +86,10 @@ impl AppError {
             AppError::Internal(_) => "INTERNAL_ERROR",
             AppError::BadRequest(_) => "BAD_REQUEST",
             AppError::ServiceUnavailable(_) => "SERVICE_UNAVAILABLE",
+            AppError::Anyhow(_) => "INTERNAL_ERROR",
         }
     }
-    
+
     /// Check if error should be logged as warning vs error
     pub fn is_client_error(&self) -> bool {
         matches!(
@@ -119,7 +121,7 @@ impl ErrorResponse {
     /// Create error response from AppError
     pub fn from_app_error(error: AppError, request_id: Option<String>) -> Self {
         let status_code = error.status_code();
-        
+
         Self {
             error: error.error_code().to_string(),
             message: error.to_string(),
@@ -130,19 +132,19 @@ impl ErrorResponse {
             details: None,
         }
     }
-    
+
     /// Create error response with additional details
     pub fn with_details(mut self, details: serde_json::Value) -> Self {
         self.details = Some(details);
         self
     }
-    
+
     /// Create validation error with field details
     pub fn validation_error(message: String, field_errors: Vec<FieldError>) -> Self {
         let details = serde_json::json!({
             "field_errors": field_errors
         });
-        
+
         Self {
             error: "VALIDATION_ERROR".to_string(),
             message,
@@ -164,7 +166,11 @@ pub struct FieldError {
 }
 
 impl FieldError {
-    pub fn new(field: impl Into<String>, message: impl Into<String>, code: impl Into<String>) -> Self {
+    pub fn new(
+        field: impl Into<String>,
+        message: impl Into<String>,
+        code: impl Into<String>,
+    ) -> Self {
         Self {
             field: field.into(),
             message: message.into(),
@@ -181,39 +187,39 @@ impl AppError {
     pub fn not_found(resource: &str, id: impl fmt::Display) -> Self {
         Self::NotFound(format!("{} with id {} not found", resource, id))
     }
-    
+
     pub fn validation(message: impl Into<String>) -> Self {
         Self::Validation(message.into())
     }
-    
+
     pub fn authentication(message: impl Into<String>) -> Self {
         Self::Authentication(message.into())
     }
-    
+
     pub fn authorization(message: impl Into<String>) -> Self {
         Self::Authorization(message.into())
     }
-    
+
     pub fn payment(message: impl Into<String>) -> Self {
         Self::Payment(message.into())
     }
-    
+
     pub fn external_service(service: &str, message: impl Into<String>) -> Self {
         Self::ExternalService(format!("{}: {}", service, message.into()))
     }
-    
+
     pub fn internal(message: impl Into<String>) -> Self {
         Self::Internal(message.into())
     }
-    
+
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::BadRequest(message.into())
     }
-    
+
     pub fn conflict(message: impl Into<String>) -> Self {
         Self::Conflict(message.into())
     }
-    
+
     pub fn service_unavailable(message: impl Into<String>) -> Self {
         Self::ServiceUnavailable(message.into())
     }
@@ -222,34 +228,55 @@ impl AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_error_status_codes() {
-        assert_eq!(AppError::NotFound("test".to_string()).status_code(), StatusCode::NOT_FOUND);
-        assert_eq!(AppError::Authentication("test".to_string()).status_code(), StatusCode::UNAUTHORIZED);
-        assert_eq!(AppError::Authorization("test".to_string()).status_code(), StatusCode::FORBIDDEN);
-        assert_eq!(AppError::Validation("test".to_string()).status_code(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            AppError::NotFound("test".to_string()).status_code(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            AppError::Authentication("test".to_string()).status_code(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            AppError::Authorization("test".to_string()).status_code(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            AppError::Validation("test".to_string()).status_code(),
+            StatusCode::BAD_REQUEST
+        );
     }
-    
+
     #[test]
     fn test_error_codes() {
-        assert_eq!(AppError::NotFound("test".to_string()).error_code(), "NOT_FOUND");
-        assert_eq!(AppError::Authentication("test".to_string()).error_code(), "AUTHENTICATION_ERROR");
-        assert_eq!(AppError::Validation("test".to_string()).error_code(), "VALIDATION_ERROR");
+        assert_eq!(
+            AppError::NotFound("test".to_string()).error_code(),
+            "NOT_FOUND"
+        );
+        assert_eq!(
+            AppError::Authentication("test".to_string()).error_code(),
+            "AUTHENTICATION_ERROR"
+        );
+        assert_eq!(
+            AppError::Validation("test".to_string()).error_code(),
+            "VALIDATION_ERROR"
+        );
     }
-    
+
     #[test]
     fn test_client_error_classification() {
         assert!(AppError::NotFound("test".to_string()).is_client_error());
         assert!(AppError::Validation("test".to_string()).is_client_error());
         assert!(!AppError::Database(sqlx::Error::RowNotFound).is_client_error());
     }
-    
+
     #[test]
     fn test_error_response_creation() {
         let error = AppError::NotFound("User".to_string());
         let response = ErrorResponse::from_app_error(error, Some("req-123".to_string()));
-        
+
         assert_eq!(response.error, "NOT_FOUND");
         assert_eq!(response.status, 404);
         assert_eq!(response.request_id, Some("req-123".to_string()));
