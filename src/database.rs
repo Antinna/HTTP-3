@@ -71,7 +71,7 @@ impl DatabaseService {
     }
     
     /// Create database service with custom pool configuration
-    pub async fn with_config(database_url: &str, max_connections: u32, connect_timeout: Duration) -> AppResult<Self> {
+    pub async fn with_config(database_url: &str, max_connections: u32, _connect_timeout: Duration) -> AppResult<Self> {
         info!("Initializing database connection pool with custom configuration");
         
         let pool = MySqlPool::connect_with(
@@ -97,6 +97,8 @@ impl DatabaseService {
     pub fn pool(&self) -> &MySqlPool {
         &self.pool
     }
+
+
     
     /// Execute a function within a database transaction
     pub async fn transaction<F, T>(&self, f: F) -> AppResult<T>

@@ -24,8 +24,8 @@ pub enum AppError {
     #[error("Payment error: {0}")]
     Payment(String),
 
-    #[error("External service error: {0}")]
-    ExternalService(String),
+    #[error("External service error ({0}): {1}")]
+    ExternalService(String, String),
 
     #[error("Configuration error: {0}")]
     Configuration(String),
@@ -58,7 +58,7 @@ impl AppError {
             AppError::Authorization(_) => StatusCode::FORBIDDEN,
             AppError::Validation(_) => StatusCode::BAD_REQUEST,
             AppError::Payment(_) => StatusCode::PAYMENT_REQUIRED,
-            AppError::ExternalService(_) => StatusCode::BAD_GATEWAY,
+            AppError::ExternalService(_, _) => StatusCode::BAD_GATEWAY,
             AppError::Configuration(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::Conflict(_) => StatusCode::CONFLICT,
@@ -78,7 +78,7 @@ impl AppError {
             AppError::Authorization(_) => "AUTHORIZATION_ERROR",
             AppError::Validation(_) => "VALIDATION_ERROR",
             AppError::Payment(_) => "PAYMENT_ERROR",
-            AppError::ExternalService(_) => "EXTERNAL_SERVICE_ERROR",
+            AppError::ExternalService(_, _) => "EXTERNAL_SERVICE_ERROR",
             AppError::Configuration(_) => "CONFIGURATION_ERROR",
             AppError::NotFound(_) => "NOT_FOUND",
             AppError::Conflict(_) => "CONFLICT",
@@ -205,7 +205,7 @@ impl AppError {
     }
 
     pub fn external_service(service: &str, message: impl Into<String>) -> Self {
-        Self::ExternalService(format!("{}: {}", service, message.into()))
+        Self::ExternalService(service.to_string(), message.into())
     }
 
     pub fn internal(message: impl Into<String>) -> Self {

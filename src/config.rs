@@ -170,8 +170,6 @@ impl AppConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::env;
 
     // Note: These tests are commented out to avoid conflicts with other tests
     // In a real application, we would use serial_test crate or separate test processes

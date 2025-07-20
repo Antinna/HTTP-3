@@ -2,6 +2,9 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
+use tracing::{debug, info};
+
+use crate::error::AppResult;
 
 /// Currency configuration loaded from environment variables
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,7 +46,9 @@ impl CurrencyHelper {
     }
 
     /// Create currency helper from environment variables
-    pub fn from_env() -> Self {
+    pub fn from_env() -> AppResult<Self> {
+        info!("Loading currency configuration from environment");
+        
         let config = CurrencyConfig {
             code: env::var("APP_CURRENCY").unwrap_or_else(|_| "INR".to_string()),
             symbol: env::var("APP_CURRENCY_SYMBOL").unwrap_or_else(|_| "₹".to_string()),
@@ -60,13 +65,15 @@ impl CurrencyHelper {
                 .unwrap_or_else(|_| "true".to_string())
                 .parse()
                 .unwrap_or(true),
-            rates: Self::load_exchange_rates(),
+            rates: Self::load_exchange_rates()?,
         };
-        Self::new(config)
+        
+        debug!("Currency configuration loaded: {} ({})", config.name, config.symbol);
+        Ok(Self::new(config))
     }
 
     /// Load exchange rates from environment variables
-    fn load_exchange_rates() -> HashMap<String, Decimal> {
+    fn load_exchange_rates() -> AppResult<HashMap<String, Decimal>> {
         let mut rates = HashMap::new();
         
         // Load exchange rates from environment variables
@@ -76,12 +83,14 @@ impl CurrencyHelper {
                 if let Some(currency_code) = key.strip_prefix("EXCHANGE_RATE_") {
                     if let Ok(rate) = value.parse::<Decimal>() {
                         rates.insert(currency_code.to_string(), rate);
+                        debug!("Loaded exchange rate: {} = {}", currency_code, rate);
                     }
                 }
             }
         }
         
-        rates
+        info!("Loaded {} exchange rates from environment", rates.len());
+        Ok(rates)
     }
 
     /// Format amount with currency symbol
@@ -322,7 +331,7 @@ mod tests {
 
     #[test]
     fn test_currency_formatting() {
-        let helper = CurrencyHelper::from_env();
+        let helper = CurrencyHelper::from_env().unwrap();
         
         assert_eq!(helper.format(dec!(1234.56), None), "₹1,234.56");
         assert_eq!(helper.format_number(dec!(1000)), "1,000.00");
@@ -333,7 +342,7 @@ mod tests {
 
     #[test]
     fn test_thousands_separator() {
-        let helper = CurrencyHelper::from_env();
+        let helper = CurrencyHelper::from_env().unwrap();
         
         assert_eq!(helper.format_number(dec!(1000)), "1,000.00");
         assert_eq!(helper.format_number(dec!(1000000)), "1,000,000.00");
@@ -342,7 +351,7 @@ mod tests {
 
     #[test]
     fn test_currency_parsing() {
-        let helper = CurrencyHelper::from_env();
+        let helper = CurrencyHelper::from_env().unwrap();
         
         assert_eq!(helper.parse("₹1,234.56").unwrap(), dec!(1234.56));
         assert_eq!(helper.parse("1,000.00").unwrap(), dec!(1000.00));
@@ -351,14 +360,14 @@ mod tests {
 
     #[test]
     fn test_price_range_formatting() {
-        let helper = CurrencyHelper::from_env();
+        let helper = CurrencyHelper::from_env().unwrap();
         
         assert_eq!(helper.format_range(dec!(100), dec!(500)), "₹100.00 - ₹500.00");
     }
 
     #[test]
     fn test_percentage_calculations() {
-        let helper = CurrencyHelper::from_env();
+        let helper = CurrencyHelper::from_env().unwrap();
         
         assert_eq!(helper.calculate_percentage(dec!(1000), dec!(10)), dec!(100));
         assert_eq!(helper.add_percentage(dec!(1000), dec!(10)), dec!(1100));
@@ -367,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_currency_rounding() {
-        let helper = CurrencyHelper::from_env();
+        let helper = CurrencyHelper::from_env().unwrap();
         
         assert_eq!(helper.round(dec!(123.456)), dec!(123.46));
         assert_eq!(helper.round(dec!(123.454)), dec!(123.45));
@@ -375,7 +384,7 @@ mod tests {
 
     #[test]
     fn test_currency_comparisons() {
-        let helper = CurrencyHelper::from_env();
+        let helper = CurrencyHelper::from_env().unwrap();
         
         assert!(helper.is_positive(dec!(100)));
         assert!(helper.is_negative(dec!(-100)));

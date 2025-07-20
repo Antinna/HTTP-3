@@ -2,11 +2,10 @@ use std::collections::HashMap;
 use std::env;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::error::{AppError, AppResult};
 
@@ -55,7 +54,7 @@ impl FirebaseConfig {
 }
 
 /// Firebase JWT token claims
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FirebaseTokenClaims {
     pub iss: String,
     pub aud: String,
@@ -72,7 +71,7 @@ pub struct FirebaseTokenClaims {
     pub firebase: FirebaseAuthContext,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FirebaseAuthContext {
     pub identities: HashMap<String, Vec<String>>,
     pub sign_in_provider: String,
@@ -503,8 +502,10 @@ mod tests {
     #[test]
     fn test_firebase_config_creation() {
         // Test with minimal required environment variables
-        std::env::set_var("FIREBASE_PROJECT_ID", "test-project");
-        std::env::set_var("FIREBASE_API_KEY", "test-api-key");
+        unsafe {
+            std::env::set_var("FIREBASE_PROJECT_ID", "test-project");
+            std::env::set_var("FIREBASE_API_KEY", "test-api-key");
+        }
         
         let config = FirebaseConfig::from_env().unwrap();
         
@@ -514,17 +515,21 @@ mod tests {
         assert!(!config.has_service_account());
         
         // Clean up
-        std::env::remove_var("FIREBASE_PROJECT_ID");
-        std::env::remove_var("FIREBASE_API_KEY");
+        unsafe {
+            std::env::remove_var("FIREBASE_PROJECT_ID");
+            std::env::remove_var("FIREBASE_API_KEY");
+        }
     }
     
     #[test]
     fn test_firebase_config_with_service_account() {
         // Test with service account configuration
-        std::env::set_var("FIREBASE_PROJECT_ID", "test-project");
-        std::env::set_var("FIREBASE_API_KEY", "test-api-key");
-        std::env::set_var("FIREBASE_SERVICE_ACCOUNT_EMAIL", "test@test-project.iam.gserviceaccount.com");
-        std::env::set_var("FIREBASE_PRIVATE_KEY", "-----BEGIN PRIVATE KEY-----\ntest-key\n-----END PRIVATE KEY-----");
+        unsafe {
+            std::env::set_var("FIREBASE_PROJECT_ID", "test-project");
+            std::env::set_var("FIREBASE_API_KEY", "test-api-key");
+            std::env::set_var("FIREBASE_SERVICE_ACCOUNT_EMAIL", "test@test-project.iam.gserviceaccount.com");
+            std::env::set_var("FIREBASE_PRIVATE_KEY", "-----BEGIN PRIVATE KEY-----\ntest-key\n-----END PRIVATE KEY-----");
+        }
         
         let config = FirebaseConfig::from_env().unwrap();
         
@@ -532,10 +537,12 @@ mod tests {
         assert_eq!(config.service_account_email.unwrap(), "test@test-project.iam.gserviceaccount.com");
         
         // Clean up
-        std::env::remove_var("FIREBASE_PROJECT_ID");
-        std::env::remove_var("FIREBASE_API_KEY");
-        std::env::remove_var("FIREBASE_SERVICE_ACCOUNT_EMAIL");
-        std::env::remove_var("FIREBASE_PRIVATE_KEY");
+        unsafe {
+            std::env::remove_var("FIREBASE_PROJECT_ID");
+            std::env::remove_var("FIREBASE_API_KEY");
+            std::env::remove_var("FIREBASE_SERVICE_ACCOUNT_EMAIL");
+            std::env::remove_var("FIREBASE_PRIVATE_KEY");
+        }
     }
     
     #[test]
